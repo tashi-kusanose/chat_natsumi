@@ -15,6 +15,7 @@
     #admin-panel input, #admin-panel textarea { width: 100%; box-sizing: border-box; margin-bottom: 12px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
     #admin-panel button { width: 100%; background: var(--main-color); color: white; border: none; padding: 12px; border-radius: 25px; font-weight: bold; cursor: pointer; transition: opacity 0.3s; }
     #admin-panel button:hover { opacity: 0.8; }
+    #cancel-btn { background: #ccc !important; margin-top: 10px; display: none; }
     
     /* メッセージ表示 */
     .message-box { background: #fff; padding: 18px; margin-bottom: 20px; border-radius: 15px; box-shadow: 0 3px 6px rgba(0,0,0,0.05); animation: fadeIn 0.5s ease-in-out; }
@@ -22,6 +23,12 @@
     .text { white-space: pre-wrap; word-break: break-all; margin-bottom: 12px; font-size: 0.95rem; }
     .media-content { max-width: 100%; border-radius: 10px; display: block; margin-top: 10px; }
     video.media-content { background: #000; }
+    
+    /* 編集・削除ボタンエリア */
+    .admin-controls { margin-top: 15px; border-top: 1px dashed #eee; padding-top: 10px; text-align: right; }
+    .btn-edit { background: #4CAF50; color: white; border: none; padding: 5px 15px; border-radius: 15px; font-size: 12px; cursor: pointer; }
+    .btn-delete { background: #f44336; color: white; border: none; padding: 5px 15px; border-radius: 15px; font-size: 12px; cursor: pointer; margin-left: 5px; }
+
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
@@ -31,32 +38,40 @@
   <h2>My Announcements</h2>
 
   <div id="admin-panel">
+    <h3 id="form-title" style="margin-top:0;">👑 管理者投稿フォーム</h3>
     <input type="password" id="adminPass" placeholder="管理者パスワード">
     <textarea id="msg" placeholder="リスナーへメッセージを入力..." rows="4"></textarea>
-    <input type="file" id="fileInput" accept="image/*,video/*">
-    <button onclick="postData()">投稿を公開する</button>
-    <p id="status" style="text-align:center; font-size:12px; margin-top:10px;"></p>
+    <div id="file-container">
+      <input type="file" id="fileInput" accept="image/*,video/*">
+    </div>
+    <button id="submit-btn" onclick="postData()">投稿を公開する</button>
+    <button id="cancel-btn" onclick="cancelEdit()">編集をやめる</button>
+    <p id="status" style="text-align:center; font-size:12px; margin-top:10px; font-weight:bold;"></p>
   </div>
 
   <div id="chat-container">読み込み中...</div>
 </div>
 
 <script>
-  // GASのウェブアプリURLを組み込み済み
-  const apiURL = 'https://script.google.com/macros/s/AKfycbxME2GTSOyLStlV8-_h3lWrSgpXJPcl61tLzSd6YcELDs2WtywsYknF0ka6L16hcHqp/exec';
+  // ★ここにGASのURLを貼り付け
+  const apiURL = 'https://script.google.com/macros/s/AKfycbzWH-Jon3FBVKx4tsB1islTzBcfrK-UFrfrr7Ol8nGftJJe-GWlt34K6qpwd7v1QsRr/exec';
 
-  // URLパラメータ ?admin=1 のチェック
+  let currentMessages = []; // 読み込んだデータを保持する
+  let editingId = null;     // 現在編集中のIDを保持する
+
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('admin') === '1') {
-    document.getElementById('admin-panel').style.display = 'block';
-  }
+  const isAdmin = urlParams.get('admin') === '1';
+  if (isAdmin) document.getElementById('admin-panel').style.display = 'block';
 
   function loadMessages() {
-    fetch(apiURL+ "?t=" + new Date().getTime())
+    // キャッシュ回避のためにタイムスタンプを付与
+    fetch(apiURL + "?t=" + new Date().getTime())
       .then(res => res.json())
       .then(data => {
+        currentMessages = data;
         const container = document.getElementById('chat-container');
         container.innerHTML = data.length === 0 ? '<p style="text-align:center;">まだ投稿はありません。</p>' : '';
+        
         data.forEach(item => {
           const div = document.createElement('div');
           div.className = 'message-box';
@@ -71,7 +86,17 @@
             }
           }
 
-          div.innerHTML = `<div class="date">${item.date}</div><div class="text">${item.message}</div>${mediaHtml}`;
+          // 管理者モードの時だけ編集・削除ボタンを表示
+          let adminHtml = '';
+          if (isAdmin) {
+            adminHtml = `
+              <div class="admin-controls">
+                <button class="btn-edit" onclick="startEdit(${item.id})">✏️ 編集</button>
+                <button class="btn-delete" onclick="deleteMsg(${item.id})">🗑️ 削除</button>
+              </div>`;
+          }
+
+          div.innerHTML = `<div class="date">${item.date}</div><div class="text">${item.message}</div>${mediaHtml}${adminHtml}`;
           container.appendChild(div);
         });
       }).catch(() => {
@@ -79,44 +104,98 @@
       });
   }
 
+  // --- 📝 編集の準備処理 ---
+  function startEdit(id) {
+    const target = currentMessages.find(m => m.id === id);
+    if(!target) return;
+    
+    editingId = id;
+    document.getElementById('msg').value = target.message;
+    document.getElementById('form-title').innerText = "✏️ 投稿の編集";
+    document.getElementById('submit-btn').innerText = "更新する";
+    document.getElementById('cancel-btn').style.display = "block";
+    document.getElementById('file-container').style.display = "none"; // 編集時は画像アップロードを隠す(テキスト修正のみ)
+    
+    // 一番上のフォームへスクロール
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // --- ✖️ 編集キャンセル処理 ---
+  function cancelEdit() {
+    editingId = null;
+    document.getElementById('msg').value = '';
+    document.getElementById('fileInput').value = '';
+    document.getElementById('form-title').innerText = "👑 管理者投稿フォーム";
+    document.getElementById('submit-btn').innerText = "投稿を公開する";
+    document.getElementById('cancel-btn').style.display = "none";
+    document.getElementById('file-container').style.display = "block";
+  }
+
+  // --- 🗑️ 削除処理 ---
+  function deleteMsg(id) {
+    const pass = document.getElementById('adminPass').value;
+    if (!pass) return alert("パスワードを入力してください。");
+    if (!confirm("本当にこの投稿を削除しますか？\n（元には戻せません）")) return;
+
+    document.getElementById('status').innerText = "削除中...";
+    document.getElementById('status').style.color = "red";
+
+    fetch(apiURL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'delete', id: id, password: pass })
+    })
+    .then(res => res.json())
+    .then(res => {
+      if (res.status === 'success') {
+        document.getElementById('status').innerText = "✅ 削除が完了しました";
+        document.getElementById('status').style.color = "green";
+        loadMessages(); // 再読み込み
+      } else {
+        alert("エラー: " + res.message);
+      }
+    });
+  }
+
+  // --- 🚀 送信処理（新規＆編集） ---
   function postData() {
     const pass = document.getElementById('adminPass').value;
     const msg = document.getElementById('msg').value;
     const fileInput = document.getElementById('fileInput').files[0];
     const status = document.getElementById('status');
     
-    if (!pass || (!msg && !fileInput)) return alert("パスワードと内容を入力してください。");
+    if (!pass) return alert("パスワードを入力してください。");
+    if (!msg && !fileInput && !editingId) return alert("内容を入力してください。");
     
-    status.innerText = "アップロード中...";
+    status.innerText = editingId ? "更新中..." : "アップロード中...";
     status.style.color = "blue";
 
     const send = (fileData) => {
+      // 編集中なら'edit'、それ以外は'create'
+      const payload = { action: editingId ? 'edit' : 'create', password: pass, msg: msg };
+      if (editingId) payload.id = editingId;
+      if (fileData) payload.fileData = fileData;
+
       fetch(apiURL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ password: pass, msg: msg, fileData: fileData })
+        body: JSON.stringify(payload)
       })
       .then(res => res.json())
       .then(res => {
         if (res.status === 'success') {
-          status.innerText = "✅ 投稿が完了しました！";
+          status.innerText = editingId ? "✅ 更新が完了しました！" : "✅ 投稿が完了しました！";
           status.style.color = "green";
-          document.getElementById('msg').value = '';
-          document.getElementById('adminPass').value = '';
-          document.getElementById('fileInput').value = '';
-          loadMessages();
+          cancelEdit(); // フォームをリセット
+          loadMessages(); // 再読み込み
         } else {
           status.innerText = "❌ エラー: " + res.message;
           status.style.color = "red";
         }
-      })
-      .catch(err => {
-        status.innerText = "❌ 送信に失敗しました。";
-        status.style.color = "red";
       });
     };
 
-    if (fileInput) {
+    if (!editingId && fileInput) {
       const reader = new FileReader();
       reader.onload = (e) => {
         send({ base64: e.target.result.split(',')[1], mimeType: fileInput.type, fileName: fileInput.name });
@@ -127,6 +206,7 @@
     }
   }
 
+  // 初回読み込み
   loadMessages();
 </script>
 
