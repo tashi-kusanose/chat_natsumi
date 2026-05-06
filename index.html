@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Announcement Room</title>
+  <style>
+    :root { --main-color: #ffb7c5; --bg-color: #fdfafb; }
+    body { font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif; background-color: var(--bg-color); color: #444; margin: 0; padding: 20px; line-height: 1.6; }
+    .container { max-width: 600px; margin: 0 auto; }
+    h2 { text-align: center; color: var(--main-color); border-bottom: 2px solid var(--main-color); padding-bottom: 10px; }
+    
+    /* 管理者パネル */
+    #admin-panel { display: none; background: #fff; padding: 20px; border-radius: 15px; border: 2px dashed var(--main-color); margin-bottom: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+    #admin-panel input, #admin-panel textarea { width: 100%; box-sizing: border-box; margin-bottom: 12px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+    #admin-panel button { width: 100%; background: var(--main-color); color: white; border: none; padding: 12px; border-radius: 25px; font-weight: bold; cursor: pointer; transition: opacity 0.3s; }
+    #admin-panel button:hover { opacity: 0.8; }
+    
+    /* メッセージ表示 */
+    .message-box { background: #fff; padding: 18px; margin-bottom: 20px; border-radius: 15px; box-shadow: 0 3px 6px rgba(0,0,0,0.05); animation: fadeIn 0.5s ease-in-out; }
+    .date { font-size: 0.75rem; color: #aaa; margin-bottom: 8px; font-weight: bold; }
+    .text { white-space: pre-wrap; word-break: break-all; margin-bottom: 12px; font-size: 0.95rem; }
+    .media-content { max-width: 100%; border-radius: 10px; display: block; margin-top: 10px; }
+    video.media-content { background: #000; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>My Announcements</h2>
+
+  <div id="admin-panel">
+    <input type="password" id="adminPass" placeholder="管理者パスワード">
+    <textarea id="msg" placeholder="リスナーへメッセージを入力..." rows="4"></textarea>
+    <input type="file" id="fileInput" accept="image/*,video/*">
+    <button onclick="postData()">投稿を公開する</button>
+    <p id="status" style="text-align:center; font-size:12px; margin-top:10px;"></p>
+  </div>
+
+  <div id="chat-container">読み込み中...</div>
+</div>
+
+<script>
+  // GASのウェブアプリURLを組み込み済み
+  const apiURL = 'https://script.google.com/macros/s/AKfycbx5QmB2JVCvWkcBb1XkZyZdjWycCa2zL909p-hU6k6xhEiKB3XisfirSnQC-fitWaQH/exec';
+
+  // URLパラメータ ?admin=1 のチェック
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('admin') === '1') {
+    document.getElementById('admin-panel').style.display = 'block';
+  }
+
+  function loadMessages() {
+    fetch(apiURL)
+      .then(res => res.json())
+      .then(data => {
+        const container = document.getElementById('chat-container');
+        container.innerHTML = data.length === 0 ? '<p style="text-align:center;">まだ投稿はありません。</p>' : '';
+        data.forEach(item => {
+          const div = document.createElement('div');
+          div.className = 'message-box';
+          
+          let mediaHtml = '';
+          if (item.fileUrl) {
+            const directUrl = item.fileUrl.replace('file/d/', 'uc?id=').replace('/view?usp=drivesdk', '');
+            if (item.fileUrl.includes('.mp4') || item.fileUrl.includes('video')) {
+              mediaHtml = `<video src="${directUrl}" class="media-content" controls></video>`;
+            } else {
+              mediaHtml = `<a href="${item.fileUrl}" target="_blank"><img src="${directUrl}" class="media-content"></a>`;
+            }
+          }
+
+          div.innerHTML = `<div class="date">${item.date}</div><div class="text">${item.message}</div>${mediaHtml}`;
+          container.appendChild(div);
+        });
+      }).catch(() => {
+        document.getElementById('chat-container').innerText = '読み込みに失敗しました。';
+      });
+  }
+
+  function postData() {
+    const pass = document.getElementById('adminPass').value;
+    const msg = document.getElementById('msg').value;
+    const fileInput = document.getElementById('fileInput').files[0];
+    const status = document.getElementById('status');
+    
+    if (!pass || (!msg && !fileInput)) return alert("パスワードと内容を入力してください。");
+    
+    status.innerText = "アップロード中...";
+    status.style.color = "blue";
+
+    const send = (fileData) => {
+      fetch(apiURL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ password: pass, msg: msg, fileData: fileData })
+      })
+      .then(res => res.json())
+      .then(res => {
+        if (res.status === 'success') {
+          status.innerText = "✅ 投稿が完了しました！";
+          status.style.color = "green";
+          document.getElementById('msg').value = '';
+          document.getElementById('adminPass').value = '';
+          document.getElementById('fileInput').value = '';
+          loadMessages();
+        } else {
+          status.innerText = "❌ エラー: " + res.message;
+          status.style.color = "red";
+        }
+      })
+      .catch(err => {
+        status.innerText = "❌ 送信に失敗しました。";
+        status.style.color = "red";
+      });
+    };
+
+    if (fileInput) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        send({ base64: e.target.result.split(',')[1], mimeType: fileInput.type, fileName: fileInput.name });
+      };
+      reader.readAsDataURL(fileInput);
+    } else {
+      send(null);
+    }
+  }
+
+  loadMessages();
+</script>
+
+</body>
+</html>
